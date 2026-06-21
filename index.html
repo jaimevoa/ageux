@@ -55,6 +55,31 @@
     color: rgba(255,255,255,.5); font-size: .72rem; line-height: 1.6;
     pointer-events: none; text-align: right;
   }
+  /* Virtual joystick */
+  #joystick-zone {
+    position: fixed; bottom: 30px; left: 30px;
+    width: 120px; height: 120px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.12);
+    border: 2px solid rgba(255,255,255,0.25);
+    display: none; /* shown only on touch devices */
+    pointer-events: all; z-index: 15; touch-action: none;
+  }
+  #joystick-knob {
+    position: absolute; top: 50%; left: 50%;
+    width: 48px; height: 48px; border-radius: 50%;
+    background: rgba(200,150,60,0.75);
+    border: 2px solid rgba(255,210,100,0.6);
+    transform: translate(-50%,-50%);
+    pointer-events: none;
+  }
+  /* Look zone (right side) */
+  #look-zone {
+    position: fixed; top: 0; right: 0;
+    width: 55%; height: 100%;
+    display: none;
+    pointer-events: all; z-index: 14; touch-action: none;
+  }
 </style>
 </head>
 <body>
@@ -63,15 +88,19 @@
   <div id="crosshair"></div>
   <div id="room-label"></div>
   <div id="minimap"><canvas id="minimap-canvas" width="140" height="140"></canvas></div>
-  <div id="controls-hint">ZQSD / WASD : avancer<br>Souris : regarder<br>E : ouvrir portes</div>
+  <div id="controls-hint">ZQSD / WASD : avancer<br>Souris : regarder</div>
 </div>
+
+<!-- Touch controls -->
+<div id="joystick-zone"><div id="joystick-knob"></div></div>
+<div id="look-zone"></div>
 
 <div id="overlay">
   <h1>Maison Inchallah</h1>
   <p>Visite virtuelle · Style Andalou</p>
   <p style="opacity:.5;font-size:.8rem">Algérie · 200 m²</p>
   <button id="startBtn">Entrer dans la maison</button>
-  <div class="hint">ZQSD / WASD pour se déplacer · Souris pour regarder</div>
+  <div class="hint" id="controls-text">Joystick gauche : avancer · Glisser droite : regarder</div>
 </div>
 
 <script type="importmap">
@@ -888,24 +917,26 @@ function getCurrentRoom(x, z) {
   return 'Extérieur';
 }
 
+// ─── Device detection ────────────────────────────────────────────────────────
+const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
 // ─── First-person controller ─────────────────────────────────────────────────
 let isLocked = false;
+let gameStarted = false;
 const keys = {};
 const euler = new THREE.Euler(0, 0, 0, 'YXZ');
-const velocity = new THREE.Vector3();
 const direction = new THREE.Vector3();
 
 document.addEventListener('keydown', e => { keys[e.code] = true; });
 document.addEventListener('keyup',   e => { keys[e.code] = false; });
 
+// Desktop: pointer lock
 canvas.addEventListener('click', () => {
-  if (!isLocked) canvas.requestPointerLock();
+  if (gameStarted && !isTouchDevice && !isLocked) canvas.requestPointerLock();
 });
-
 document.addEventListener('pointerlockchange', () => {
   isLocked = document.pointerLockElement === canvas;
 });
-
 document.addEventListener('mousemove', e => {
   if (!isLocked) return;
   euler.setFromQuaternion(camera.quaternion);
@@ -915,11 +946,101 @@ document.addEventListener('mousemove', e => {
   camera.quaternion.setFromEuler(euler);
 });
 
+// ─── Touch / Virtual Joystick ────────────────────────────────────────────────
+const joyZone  = document.getElementById('joystick-zone');
+const joyKnob  = document.getElementById('joystick-knob');
+const lookZone = document.getElementById('look-zone');
+
+// Joystick state
+let joyActive = false, joyId = -1;
+let joyOriginX = 0, joyOriginY = 0;
+let joyDX = 0, joyDY = 0;
+const JOY_R = 50; // max knob travel (px)
+
+// Look state
+let lookActive = false, lookId = -1;
+let lookLastX = 0, lookLastY = 0;
+
+if (isTouchDevice) {
+  joyZone.style.display  = 'block';
+  lookZone.style.display = 'block';
+  document.getElementById('controls-hint').style.display = 'none';
+
+  // --- Joystick touch handlers ---
+  joyZone.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    joyActive = true; joyId = t.identifier;
+    const rect = joyZone.getBoundingClientRect();
+    joyOriginX = rect.left + rect.width/2;
+    joyOriginY = rect.top  + rect.height/2;
+  }, { passive: false });
+
+  joyZone.addEventListener('touchmove', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      if (t.identifier !== joyId) continue;
+      joyDX = t.clientX - joyOriginX;
+      joyDY = t.clientY - joyOriginY;
+      const len = Math.sqrt(joyDX*joyDX + joyDY*joyDY);
+      if (len > JOY_R) { joyDX *= JOY_R/len; joyDY *= JOY_R/len; }
+      joyKnob.style.transform = `translate(calc(-50% + ${joyDX}px), calc(-50% + ${joyDY}px))`;
+    }
+  }, { passive: false });
+
+  const joyEnd = e => {
+    for (const t of e.changedTouches) {
+      if (t.identifier !== joyId) continue;
+      joyActive = false; joyId = -1; joyDX = 0; joyDY = 0;
+      joyKnob.style.transform = 'translate(-50%,-50%)';
+    }
+  };
+  joyZone.addEventListener('touchend',    joyEnd);
+  joyZone.addEventListener('touchcancel', joyEnd);
+
+  // --- Look zone touch handlers ---
+  lookZone.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    lookActive = true; lookId = t.identifier;
+    lookLastX = t.clientX; lookLastY = t.clientY;
+  }, { passive: false });
+
+  lookZone.addEventListener('touchmove', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      if (t.identifier !== lookId) continue;
+      const dx = t.clientX - lookLastX;
+      const dy = t.clientY - lookLastY;
+      lookLastX = t.clientX; lookLastY = t.clientY;
+      euler.setFromQuaternion(camera.quaternion);
+      euler.y -= dx * 0.004;
+      euler.x -= dy * 0.004;
+      euler.x = Math.max(-Math.PI/2.5, Math.min(Math.PI/2.5, euler.x));
+      camera.quaternion.setFromEuler(euler);
+    }
+  }, { passive: false });
+
+  const lookEnd = e => {
+    for (const t of e.changedTouches) {
+      if (t.identifier === lookId) { lookActive = false; lookId = -1; }
+    }
+  };
+  lookZone.addEventListener('touchend',    lookEnd);
+  lookZone.addEventListener('touchcancel', lookEnd);
+}
+
 // ─── Start button ────────────────────────────────────────────────────────────
 const overlay = document.getElementById('overlay');
 document.getElementById('startBtn').addEventListener('click', () => {
   overlay.style.display = 'none';
-  canvas.requestPointerLock();
+  gameStarted = true;
+  if (!isTouchDevice) canvas.requestPointerLock();
+});
+document.getElementById('startBtn').addEventListener('touchend', e => {
+  e.preventDefault();
+  overlay.style.display = 'none';
+  gameStarted = true;
 });
 
 // ─── Collision detection ─────────────────────────────────────────────────────
@@ -988,37 +1109,39 @@ function updateRoomLabel() {
 
 // ─── Animation loop ──────────────────────────────────────────────────────────
 const clock = new THREE.Clock();
-let prevX = camera.position.x, prevZ = camera.position.z;
 
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
 
-  if (isLocked) {
+  if (gameStarted) {
     const speed = (keys['ShiftLeft'] || keys['ShiftRight']) ? 10 : 5;
 
     direction.set(0, 0, 0);
-    const fwd  = keys['KeyW'] || keys['KeyZ'] || keys['ArrowUp'];
-    const back = keys['KeyS'] || keys['ArrowDown'];
-    const left = keys['KeyA'] || keys['KeyQ'] || keys['ArrowLeft'];
-    const right= keys['KeyD'] || keys['ArrowRight'];
 
-    if (fwd)   direction.z -= 1;
-    if (back)  direction.z += 1;
-    if (left)  direction.x -= 1;
-    if (right) direction.x += 1;
-    direction.normalize();
+    // Keyboard input
+    if (keys['KeyW'] || keys['KeyZ'] || keys['ArrowUp'])    direction.z -= 1;
+    if (keys['KeyS'] || keys['ArrowDown'])                   direction.z += 1;
+    if (keys['KeyA'] || keys['KeyQ'] || keys['ArrowLeft'])  direction.x -= 1;
+    if (keys['KeyD'] || keys['ArrowRight'])                  direction.x += 1;
 
-    // Apply camera yaw to movement
-    const yaw = new THREE.Quaternion();
-    yaw.setFromEuler(new THREE.Euler(0, euler.y, 0));
-    direction.applyQuaternion(yaw);
+    // Touch joystick input
+    if (joyActive && (Math.abs(joyDX) > 4 || Math.abs(joyDY) > 4)) {
+      direction.x += joyDX / JOY_R;
+      direction.z += joyDY / JOY_R;
+    }
 
-    const nx = camera.position.x + direction.x * speed * dt;
-    const nz = camera.position.z + direction.z * speed * dt;
+    if (direction.length() > 0) {
+      direction.normalize();
+      const yaw = new THREE.Quaternion();
+      yaw.setFromEuler(new THREE.Euler(0, euler.y, 0));
+      direction.applyQuaternion(yaw);
 
-    if (!checkCollision(nx, camera.position.z)) camera.position.x = nx;
-    if (!checkCollision(camera.position.x, nz)) camera.position.z = nz;
+      const nx = camera.position.x + direction.x * speed * dt;
+      const nz = camera.position.z + direction.z * speed * dt;
+      if (!checkCollision(nx, camera.position.z)) camera.position.x = nx;
+      if (!checkCollision(camera.position.x, nz)) camera.position.z = nz;
+    }
   }
 
   camera.position.y = 2.2;
