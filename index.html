@@ -99,20 +99,25 @@
   <h1>Maison Inchallah</h1>
   <p>Visite virtuelle · Style Andalou</p>
   <p style="opacity:.5;font-size:.8rem">Algérie · 200 m²</p>
-  <button id="startBtn">Entrer dans la maison</button>
+  <button id="startBtn" onclick="window._startGame && window._startGame()">Entrer dans la maison</button>
   <div class="hint" id="controls-text">Joystick gauche : avancer · Glisser droite : regarder</div>
 </div>
 
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
-  }
-}
+<script>
+// Fallback: hide overlay immediately on tap even before Three.js loads
+document.getElementById('startBtn').addEventListener('touchend', function(e){
+  e.preventDefault();
+  document.getElementById('overlay').style.display = 'none';
+  window._gameStarted = true;
+});
+document.getElementById('startBtn').addEventListener('click', function(){
+  document.getElementById('overlay').style.display = 'none';
+  window._gameStarted = true;
+});
 </script>
-<script type="module">
-import * as THREE from 'three';
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.min.js"></script>
+<script>
 
 // ─── Constants & palette ────────────────────────────────────────────────────
 const S = 2; // world scale: 1 unit = 0.5m → house is ~40×30 units
@@ -149,8 +154,8 @@ const COL = {
 };
 
 // ─── Scene setup ────────────────────────────────────────────────────────────
-const canvas = document.getElementById('canvas');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+const canvas3d = document.getElementById('canvas');
+const renderer = new THREE.WebGLRenderer({ canvas: canvas3d, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
@@ -922,7 +927,6 @@ const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0
 
 // ─── First-person controller ─────────────────────────────────────────────────
 let isLocked = false;
-let gameStarted = false;
 const keys = {};
 const euler = new THREE.Euler(0, 0, 0, 'YXZ');
 const direction = new THREE.Vector3();
@@ -931,11 +935,11 @@ document.addEventListener('keydown', e => { keys[e.code] = true; });
 document.addEventListener('keyup',   e => { keys[e.code] = false; });
 
 // Desktop: pointer lock
-canvas.addEventListener('click', () => {
-  if (gameStarted && !isTouchDevice && !isLocked) canvas.requestPointerLock();
+canvas3d.addEventListener('click', () => {
+  if (window._gameStarted && !isTouchDevice && !isLocked) canvas3d.requestPointerLock();
 });
 document.addEventListener('pointerlockchange', () => {
-  isLocked = document.pointerLockElement === canvas;
+  isLocked = document.pointerLockElement === canvas3d;
 });
 document.addEventListener('mousemove', e => {
   if (!isLocked) return;
@@ -1030,18 +1034,10 @@ if (isTouchDevice) {
   lookZone.addEventListener('touchcancel', lookEnd);
 }
 
-// ─── Start button ────────────────────────────────────────────────────────────
-const overlay = document.getElementById('overlay');
-document.getElementById('startBtn').addEventListener('click', () => {
-  overlay.style.display = 'none';
-  gameStarted = true;
-  if (!isTouchDevice) canvas.requestPointerLock();
-});
-document.getElementById('startBtn').addEventListener('touchend', e => {
-  e.preventDefault();
-  overlay.style.display = 'none';
-  gameStarted = true;
-});
+// Also try pointer lock on desktop once game starts (picked up via _gameStarted polling)
+window._startGame = () => {
+  if (!isTouchDevice) canvas3d.requestPointerLock();
+};
 
 // ─── Collision detection ─────────────────────────────────────────────────────
 const PLAYER_R = 0.5;
@@ -1114,7 +1110,7 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
 
-  if (gameStarted) {
+  if (window._gameStarted) {
     const speed = (keys['ShiftLeft'] || keys['ShiftRight']) ? 10 : 5;
 
     direction.set(0, 0, 0);
